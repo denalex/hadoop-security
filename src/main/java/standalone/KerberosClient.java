@@ -7,6 +7,9 @@ import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.security.UserGroupInformation;
 
 import java.io.IOException;
+import java.net.URISyntaxException;
+import java.net.URL;
+import java.nio.file.Paths;
 import java.security.PrivilegedExceptionAction;
 
 public class KerberosClient {
@@ -15,7 +18,7 @@ public class KerberosClient {
     private FileSystem fs;
     private UserGroupInformation loginUGI;
 
-    public KerberosClient() throws IOException {
+    public KerberosClient() throws Exception {
         conf = new Configuration();
         conf.set("fs.defaultFS","hdfs://c6401.ambari.apache.org:8020");
         conf.set("hadoop.security.authentication", "kerberos");
@@ -39,8 +42,18 @@ public class KerberosClient {
 
         */
         // TODO principal should include hostname
-        loginUGI = UserGroupInformation.loginUserFromKeytabAndReturnUGI("gpadmin@AMBARI.APACHE.ORG","/tmp/pxf.service.keytab");
-        //UserGroupInformation.loginUserFromKeytab("gpadmin@AMBARI.APACHE.ORG","/tmp/pxf.service.keytab");
+        // see https://github.com/apache/oozie/blob/master/core/src/main/java/org/apache/oozie/service/HadoopAccessorService.java#L238
+        //loginUGI = UserGroupInformation.loginUserFromKeytabAndReturnUGI("gpadmin@AMBARI.APACHE.ORG","/tmp/pxf.service.keytab");
+
+        // get full path of the keytab (only relevant for the demo)
+        String keytabFile;
+        URL resource = KerberosClient.class.getClassLoader().getResource("pxf.service.keytab");
+        try {
+            keytabFile = Paths.get(resource.toURI()).toFile().getAbsolutePath();
+        } catch (URISyntaxException e) {
+            throw new Exception(e);
+        }
+        UserGroupInformation.loginUserFromKeytab("gpadmin@AMBARI.APACHE.ORG", keytabFile);
     }
 
     public String getFilePath(Path path) {
@@ -75,9 +88,11 @@ public class KerberosClient {
         client.tryListDirectory("/gpdata");          // should succeed as it is owned by gpadmin Hadoop user
         Thread.sleep(500);
 
-        /*
+        // check and refresh the ticket once in a while (each request ?)
+        UserGroupInformation.getLoginUser().checkTGTAndReloginFromKeytab();
+
         // user = user to impersonate
-        UserGroupInformation ugi = UserGroupInformation.createProxyUser("adenissov", client.loginUGI);
+        UserGroupInformation ugi = UserGroupInformation.createProxyUser("adenissov", UserGroupInformation.getLoginUser());
         try {
             ugi.doAs(new PrivilegedExceptionAction<Void>() {
                 public Void run() throws IOException {
@@ -86,7 +101,18 @@ public class KerberosClient {
                 }
             });
         } catch (InterruptedException e) { e.printStackTrace(); }
-        */
+
+        // user = user to impersonate
+        ugi = UserGroupInformation.createProxyUser("foo", UserGroupInformation.getLoginUser());
+        try {
+            ugi.doAs(new PrivilegedExceptionAction<Void>() {
+                public Void run() throws IOException {
+                    client.listDirectory("/user/adenissov");
+                    return null;
+                }
+            });
+        } catch (InterruptedException e) { e.printStackTrace(); }
+
 
     }
 }
